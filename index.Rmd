@@ -1,0 +1,196 @@
+---
+title: "2016 US PM 2.5 Concentration by State"
+author: "Keh-Harng Feng"
+date: "April 16, 2017"
+output: 
+    bookdown::html_document2:
+        toc: true
+        toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+# Introduction
+Fine particulate matter with diameter of 2.5 $\mu m$ or less (hereby referred to as PM 2.5) [can often cause serious and long-term negative effects on respiratory systems if inhaled](https://www.epa.gov/pm-pollution/health-and-environmental-effects-particulate-matter-pm). This project aims to visualize PM 2.5 air concentration in the United States in 2016.
+
+# Data Description
+## Monitor Data
+An annual summary dataset containing air quality measurements from monitoring sites in 2016 is obtained from the [U.S. Environmental Protection Agency](http://aqsdr1.epa.gov/aqsweb/aqstmp/airdata/download_files.html#Meta). The full descriptions for the included variables can be found [here](http://aqsdr1.epa.gov/aqsweb/aqstmp/airdata/FileFormats.html#_annual_summary_files).
+
+The variables of concern for this project are
+
+1. `State.Code`: numerical state code.
+2. `Parameter.Code`: indicates the parameter measured for a particular row of measurements.
+3. `Arithmetic.Mean`: annual mean value for the measured parameter.
+
+## Geolocation Data
+The annual summary dataset only contains geolocation codes such as numerical state code and county code. It is necessary to translate the codes to more human-readable state codes in order for plotly to match their locations. Matching is done using EPA's [states and counties data](https://aqs.epa.gov/aqsweb/documents/codetables/states_and_counties.html). The variables of interest here are
+
+1. `State.Code`: numerical state code.
+2. `State.Abbreviation`: two-letter state code.
+3. `State.Name`: full state name.
+
+```{r data-ingress}
+# Data ingress
+if (!file.exists('annual_all_2016.zip')) {
+    download.file(url = 'http://aqsdr1.epa.gov/aqsweb/aqstmp/airdata/annual_all_2016.zip', destfile = 'annual_all_2016.zip')
+}
+
+if (!file.exists('annual_all_2016.csv')) {
+    unzip('annual_all_2016.zip')
+}
+
+if (!file.exists('states_and_counties.csv')) {
+    download.file(url = 'https://aqs.epa.gov/aqsweb/documents/codetables/states_and_counties.csv', destfile = 'states_and_counties.csv')    
+}
+
+data_2016 <- read.csv('annual_all_2016.csv')
+
+data_states <- read.csv('states_and_counties.csv')
+
+# Conversion
+data_2016$Parameter.Code <- factor(data_2016$Parameter.Code)
+```
+
+# Methodology
+PM 2.5 data with the corresponding parameter code of `88101` is extracted. The dataset includes potential measurements from Mexico and Canada. These are excluded as only PM 2.5 concentrations within the U.S. are of interest for this project. A naive approach is adopted to represent PM 2.5 levels. In the cases where there are multiple PM2.5 measurements made using different metrics for a specific monitor site, the final PM 2.5 level is calculated as an aggregated mean of all values. Geolocation matching is then carried out using state codes.
+
+```{r data-processing}
+# Extract PM 2.5
+Selected.Code <- c(88101)
+ind <- (data_2016$Parameter.Code %in% Selected.Code) & !(data_2016$State.Code %in% c(80, 'CC'))
+
+data_PM25 <- data_2016[ind, ]
+
+
+# Compute average PM 2.5 by state
+data_PM25 <- aggregate(list(Arithmetic.Mean = data_PM25$Arithmetic.Mean),
+                       by = list(State.Code = data_PM25$State.Code),
+                       FUN = mean)
+
+# Geolocation Matching
+data_PM25$State.Abb <- sapply(data_PM25$State.Code, 
+                              function(x) as.character(data_states$State.Abbreviation[match(x, as.numeric(as.character(data_states$State.Code)))]))
+
+data_PM25$State.Name <- sapply(data_PM25$State.Code, 
+                              function(x) as.character(data_states$State.Name[match(x, as.numeric(as.character(data_states$State.Code)))]))
+
+data_PM25$State.Abb <- factor(data_PM25$State.Abb)
+data_PM25$State.Name <- factor(data_PM25$State.Name)
+
+data_PM25$Rank <- rank(1- data_PM25$Arithmetic.Mean)
+```
+
+# Visualization
+PM 2.5 Concentration is visualized as a choropleth map using plotly. The code is adapted from the official [snippiet example](https://plot.ly/r/choropleth-maps/) and can be found in the [Appendix](#PLOTLY).
+
+```{r plotly}
+# Plotly
+library(plotly)
+data_PM25$hover <- with(data_PM25, paste(State.Name, '<br>', 
+                                         'Rank:', Rank))
+
+# give state boundaries a white border
+l <- list(color = toRGB("white"), width = 2)
+
+# specify some map projection/options
+g <- list(
+    scope = 'usa',
+    projection = list(type = 'albers usa'),
+    showlakes = TRUE,
+    lakecolor = toRGB('white')
+)
+
+p <- plot_geo(data_PM25, locationmode = 'USA-states') %>%
+    add_trace(
+        z = ~Arithmetic.Mean, text = ~hover, locations = ~State.Abb,
+        color = ~Arithmetic.Mean, colors = 'Reds'
+    ) %>%
+    colorbar(title = "Average PM 2.5 Concentration") %>%
+    layout(
+        title = '2016 US Average PM 2.5 Concentration by State<br>(Hover for details)',
+        geo = g
+    )
+p
+```
+
+# Appendix
+## Data Ingress & Processing Code {#DPC}
+```{r data-appendix, eval = FALSE, echo = TRUE}
+# Data ingress
+if (!file.exists('annual_all_2016.zip')) {
+    download.file(url = 'http://aqsdr1.epa.gov/aqsweb/aqstmp/airdata/annual_all_2016.zip', destfile = 'annual_all_2016.zip')
+}
+
+if (!file.exists('annual_all_2016.csv')) {
+    unzip('annual_all_2016.zip')
+}
+
+if (!file.exists('states_and_counties.csv')) {
+    download.file(url = 'https://aqs.epa.gov/aqsweb/documents/codetables/states_and_counties.csv', destfile = 'states_and_counties.csv')    
+}
+
+data_2016 <- read.csv('annual_all_2016.csv')
+
+data_states <- read.csv('states_and_counties.csv')
+
+# Conversion
+data_2016$Parameter.Code <- factor(data_2016$Parameter.Code)
+
+# Extract PM 2.5
+Selected.Code <- c(88101)
+ind <- (data_2016$Parameter.Code %in% Selected.Code) & !(data_2016$State.Code %in% c(80, 'CC'))
+
+data_PM25 <- data_2016[ind, ]
+
+
+# Compute average PM 2.5 by state
+data_PM25 <- aggregate(list(Arithmetic.Mean = data_PM25$Arithmetic.Mean),
+                       by = list(State.Code = data_PM25$State.Code),
+                       FUN = mean)
+
+# Geolocation Matching
+data_PM25$State.Abb <- sapply(data_PM25$State.Code, 
+                              function(x) as.character(data_states$State.Abbreviation[match(x, as.numeric(as.character(data_states$State.Code)))]))
+
+data_PM25$State.Name <- sapply(data_PM25$State.Code, 
+                              function(x) as.character(data_states$State.Name[match(x, as.numeric(as.character(data_states$State.Code)))]))
+
+data_PM25$State.Abb <- factor(data_PM25$State.Abb)
+data_PM25$State.Name <- factor(data_PM25$State.Name)
+
+data_PM25$Rank <- rank(1- data_PM25$Arithmetic.Mean)
+```
+
+## Plotly Code {#PLOTLY}
+```{r plotly-appendix, eval = FALSE, echo = TRUE}
+# Plotly
+library(plotly)
+data_PM25$hover <- with(data_PM25, paste(State.Name, '<br>', 
+                                         'Rank:', Rank))
+
+# give state boundaries a white border
+l <- list(color = toRGB("white"), width = 2)
+
+# specify some map projection/options
+g <- list(
+    scope = 'usa',
+    projection = list(type = 'albers usa'),
+    showlakes = TRUE,
+    lakecolor = toRGB('white')
+)
+
+p <- plot_geo(data_PM25, locationmode = 'USA-states') %>%
+    add_trace(
+        z = ~Arithmetic.Mean, text = ~hover, locations = ~State.Abb,
+        color = ~Arithmetic.Mean, colors = 'Reds'
+    ) %>%
+    colorbar(title = "Average PM 2.5 Concentration") %>%
+    layout(
+        title = '2016 US Average PM 2.5 Concentration by State<br>(Hover for details)',
+        geo = g
+    )
+p
+```
